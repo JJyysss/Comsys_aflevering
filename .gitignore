@@ -1,0 +1,9 @@
+# gitignore everything with no extension
+# *
+# !*.*
+# !Makefile
+
+*.o
+.DS_Store
+src/planet-latest-geonames.tsv
+src.zip
