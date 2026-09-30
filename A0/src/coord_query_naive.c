@@ -31,8 +31,8 @@ void free_naive(struct naive_data* data) {
 
 const struct record* lookup_naive(struct naive_data *data, double lon, double lat) {
   // we need to check the given lon and lat with the records in data->rs
-  double closest = 1000000;
-  struct record* closest_data = NULL;
+  double closest = INFINITY;
+  const struct record* closest_data = NULL;
   for (int i = 0; i<data->n; i++){
     double dx = data->rs[i].lon - lon;
     double dy = data->rs[i].lat - lat;
