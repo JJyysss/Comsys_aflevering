@@ -31,18 +31,18 @@ void free_naive(struct naive_data* data) {
 
 const struct record* lookup_naive(struct naive_data *data, double lon, double lat) {
   // we need to check the given lon and lat with the records in data->rs
-  double closet = 1000000;
-  struct record* closet_data = NULL;
+  double closest = 1000000;
+  struct record* closest_data = NULL;
   for (int i = 0; i<data->n; i++){
-    double lon_i = data->rs[i].lon;
-    double lat_i = data->rs[i].lat;
-    double distance = sqrt((lon_i-lon)*(lon_i-lon) + (lat_i-lat)*(lat_i-lat));
-    if (closet>distance){
-      closet = distance;
-      closet_data = &data->rs[i];
+    double dx = data->rs[i].lon - lon;
+    double dy = data->rs[i].lat - lat;
+    double distance = dx * dx + dy * dy;
+    if (closest>distance){
+      closest = distance;
+      closest_data = &data->rs[i];
     } 
   }
-  return (closet_data);
+  return (closest_data);
 }
 
 int main(int argc, char** argv) {
