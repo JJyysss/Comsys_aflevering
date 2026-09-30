@@ -5,5 +5,5 @@
 
 *.o
 .DS_Store
-src/planet-latest-geonames.tsv
-src.zip
+A0/src/planet-latest-geonames.tsv
+A0/src.zip
