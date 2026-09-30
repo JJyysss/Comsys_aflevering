@@ -60,10 +60,8 @@ const struct record* lookup_binsort(struct indexed_data *data, int64_t needle){
       return data->irs[mid].record;
     } else if (id < needle){
       low = mid + 1;
-      printf("the id is: %lld\n",id);
     } else {
       high = mid - 1;
-      printf("the id is: %lld\n",id);
     }
   }
   return 0;

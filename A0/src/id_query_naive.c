@@ -37,8 +37,6 @@ const struct record* lookup_naive(struct naive_data *data, int64_t needle) {
     int64_t id = x.osm_id;
     if(id == needle){
       return (&data->rs[i]);
-    }else{
-        printf("the id is: %lld\n",id);
     }
   }
   return 0;
