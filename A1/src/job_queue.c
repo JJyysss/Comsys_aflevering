@@ -5,6 +5,7 @@
 #include "job_queue.h"
 
 int job_queue_init(struct job_queue *job_queue, int capacity) {
+  
   assert(0);
 }
 
