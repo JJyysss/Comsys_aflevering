@@ -12,6 +12,7 @@ int job_queue_init(struct job_queue *job_queue, int capacity) {
   if (job_queue->buffer == NULL) {
     return -1;
   }
+  job_queue->destory = 0;
   job_queue->head = 0;
   job_queue->tail = 0;
   job_queue->num = 0;
@@ -30,11 +31,40 @@ int job_queue_init(struct job_queue *job_queue, int capacity) {
 }
 
 int job_queue_destroy(struct job_queue *job_queue) {
-  assert(0);
+  pthread_mutex_lock(&job_queue->mutex);
+  while (job_queue->num > 0) {
+    pthread_cond_wait(&job_queue->cond, &job_queue->mutex);
+  }
+  job_queue->destory = -1;
+  pthread_cond_broadcast(&job_queue->cond);
+  pthread_mutex_unlock(&job_queue->mutex);
+  free(job_queue->buffer);
+  return 0;
 }
 
 int job_queue_push(struct job_queue *job_queue, void *data) {
-  assert(0);
+  pthread_mutex_lock(&job_queue->mutex);
+  if (job_queue->destory == -1){
+   pthread_mutex_unlock(&job_queue->mutex);
+   return -1;
+  }
+  while (job_queue->num == job_queue->max_capacity && job_queue->destory !=-1) {
+    pthread_cond_wait(&job_queue->cond, &job_queue->mutex);
+  }
+  if (job_queue->destory == -1){
+   pthread_mutex_unlock(&job_queue->mutex);
+   return -1;
+  }
+  job_queue->buffer[job_queue->tail] = data;
+  job_queue->num++;
+  if (job_queue->tail == (job_queue->max_capacity - 1)){
+    job_queue->tail = 0; 
+    } else{
+    job_queue->tail ++;
+  }
+  pthread_cond_broadcast(&job_queue->cond);
+  pthread_mutex_unlock(&job_queue->mutex);
+  return 0;
 }
 
 int job_queue_pop(struct job_queue *job_queue, void **data) {
