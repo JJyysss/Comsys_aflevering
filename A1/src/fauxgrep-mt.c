@@ -19,6 +19,64 @@
 
 #include "job_queue.h"
 
+// Whenever we print to the screen, we will first lock this mutex.
+// This ensures that multiple threads do not try to print
+// concurrently.
+pthread_mutex_t stdout_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+int fauxgrep_file(char const *needle, char const *path) {
+  FILE *f = fopen(path, "r");
+
+  if (f == NULL) {
+    warn("failed to open %s", path);
+    return -1;
+  }
+  char *line = NULL;
+  size_t linelen = 0;
+  int lineno = 1;
+  while (getline(&line, &linelen, f) != -1) {
+    if (strstr(line, needle) != NULL) {
+      assert(pthread_mutex_lock(&stdout_mutex) == 0);
+      printf("%s:%d: %s", path, lineno, line);
+      assert(pthread_mutex_unlock(&stdout_mutex) == 0);
+    }
+    lineno++;
+  }
+  // free the buffer allocated by getline
+  free(line);
+  fclose(f);
+  return 0;
+}
+// a struct that contains job_queue amd needle
+struct worker_arg{
+  struct job_queue *jq;
+  char const *needle;
+};
+// en worker function, call the fauxgrep_file function to search for the needle in the file
+// push aand pop the file path to the job queue 
+
+void* worker (void *arg) {
+  struct worker_arg *args = arg;
+  struct job_queue *jq = args->jq;
+  char const *needle = args->needle;
+  // use job_queue_pop to get the file name from the job queue
+  // while 1 (true) keep running until break
+  while (1) {
+    char *filename;
+    if (job_queue_pop(jq, (void**)&filename) == 0) {
+      fauxgrep_file(needle, filename);
+      free(filename);
+    } else {
+      // If job_queue_pop() returned non-zero, that means the queue is
+      // being killed (or some other error occured).  In any case,
+      // that means it's time for this thread to die.
+      break;
+    }
+  }
+  return NULL;
+
+}
+
 int main(int argc, char * const *argv) {
   if (argc < 2) {
     err(1, "usage: [-n INT] STRING paths...");
@@ -51,7 +109,20 @@ int main(int argc, char * const *argv) {
     paths = &argv[2];
   }
 
-  assert(0); // Initialise the job queue and some worker threads here.
+  // Initialise the job queue and some worker threads.
+  //create job_queue
+  struct job_queue jq;
+  job_queue_init(&jq, 64);
+  struct worker_arg args;
+  args.jq = &jq;
+  args.needle = needle;
+  // Start up the worker threads.
+  pthread_t *threads = calloc(num_threads, sizeof(pthread_t));
+  for (int i = 0; i < num_threads; i++) {
+    if (pthread_create(&threads[i], NULL, &worker, &args) != 0) {
+      err(1, "pthread_create() failed");
+    }
+  }
 
   // FTS_LOGICAL = follow symbolic links
   // FTS_NOCHDIR = do not change the working directory of the process
@@ -72,7 +143,8 @@ int main(int argc, char * const *argv) {
     case FTS_D:
       break;
     case FTS_F:
-      assert(0); // Process the file p->fts_path, somehow.
+      // Process the file p->fts_path
+      job_queue_push(&jq, strdup(p->fts_path));
       break;
     default:
       break;
@@ -81,7 +153,13 @@ int main(int argc, char * const *argv) {
 
   fts_close(ftsp);
 
-  assert(0); // Shut down the job queue and the worker threads here.
-
+  // Shut down the job queue and the worker threads.
+  job_queue_destroy(&jq);
+  for (int i = 0; i < num_threads; i++) {
+    if (pthread_join(threads[i], NULL) != 0) {
+      err(1, "pthread_join() failed");
+    }
+  }
+  free(threads);
   return 0;
 }

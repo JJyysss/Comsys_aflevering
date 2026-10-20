@@ -68,5 +68,28 @@ int job_queue_push(struct job_queue *job_queue, void *data) {
 }
 
 int job_queue_pop(struct job_queue *job_queue, void **data) {
-  assert(0);
+  pthread_mutex_lock(&job_queue->mutex);
+  if (job_queue->destory == -1){
+    pthread_mutex_unlock(&job_queue->mutex);
+    return -1;
+  }
+  while (job_queue->num == 0 && job_queue->destory !=-1){
+    pthread_cond_wait(&job_queue->cond, &job_queue->mutex);
+  }
+  if (job_queue->destory == -1){
+   pthread_mutex_unlock(&job_queue->mutex);
+   return -1;
+  }
+  // copy the stored job, pointer in to data
+  *data = job_queue->buffer[job_queue->head];
+  job_queue->num --;
+  if (job_queue->head == (job_queue->max_capacity-1)){
+    job_queue->head =0;
+  }else{
+    job_queue->head++;
+  }
+  // tells the waiting threads that the jobqueue is changed
+  pthread_cond_broadcast(&job_queue->cond);
+  pthread_mutex_unlock(&job_queue->mutex);
+  return 0;
 }
