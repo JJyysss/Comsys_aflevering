@@ -64,7 +64,7 @@ const struct record* lookup_binsort(struct indexed_data *data, int64_t needle){
       high = mid - 1;
     }
   }
-  return 0;
+  return NULL;
 }
 
 int main(int argc, char** argv) {
