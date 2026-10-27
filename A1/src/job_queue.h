@@ -11,7 +11,7 @@ struct job_queue {
   int num; 
   pthread_mutex_t mutex; 
   pthread_cond_t cond;
-  int destory; // a flag to check the queue is destory or not
+  int destroy; // a flag to check the queue is destory or not
 };
 
 // Initialise a job queue with the given capacity.  The queue starts out
