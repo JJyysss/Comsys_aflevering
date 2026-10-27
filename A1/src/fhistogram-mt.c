@@ -27,7 +27,6 @@ int fhistogram_mt(char const *path) {
   FILE *f = fopen(path, "r");
   int local_histogram[8] = { 0 };
   if (f == NULL) {
-    // flush standardoutput immediately
     fflush(stdout);
     warn("failed to open %s", path);
     return -1;
@@ -93,14 +92,11 @@ int main(int argc, char * const *argv) {
 
     if (num_threads < 1) {
       err(1, "invalid thread count: %s", argv[2]);
-    }
-
+    } else{
     paths = &argv[3];
-  } else {
-    paths = &argv[1];
-  }
+    }
+  } 
 
-  // assert(0); // Initialise the job queue and some worker threads here.
   // create jobqueue
   struct job_queue jq;
   job_queue_init(&jq, 64);
@@ -131,7 +127,7 @@ int main(int argc, char * const *argv) {
     case FTS_D:
       break;
     case FTS_F:
-      // assert(0); // Process the file p->fts_path, somehow.
+    // Process the file p->fts_path, somehow.
       job_queue_push(&jq, strdup(p->fts_path));
       break;
     default:
@@ -141,7 +137,7 @@ int main(int argc, char * const *argv) {
 
   fts_close(ftsp);
 
-  // assert(0); // Shut down the job queue and the worker threads here.
+  // Shut down the job queue and the worker threads here.
   // Destroy the queue.
   job_queue_destroy(&jq);
 

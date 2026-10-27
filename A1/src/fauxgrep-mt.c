@@ -19,9 +19,9 @@
 
 #include "job_queue.h"
 
-// Whenever we print to the screen, we will first lock this mutex.
-// This ensures that multiple threads do not try to print
-// concurrently.
+/* Whenever we print to the screen, we will first lock this mutex.
+This ensures that multiple threads do not try to print
+concurrently.*/
 pthread_mutex_t stdout_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int fauxgrep_file(char const *needle, char const *path) {
@@ -52,15 +52,12 @@ struct worker_arg{
   struct job_queue *jq;
   char const *needle;
 };
-// en worker function, call the fauxgrep_file function to search for the needle in the file
-// push aand pop the file path to the job queue 
 
+// The worker function for each thread
 void* worker (void *arg) {
   struct worker_arg *args = arg;
   struct job_queue *jq = args->jq;
   char const *needle = args->needle;
-  // use job_queue_pop to get the file name from the job queue
-  // while 1 (true) keep running until break
   while (1) {
     char *filename;
     if (job_queue_pop(jq, (void**)&filename) == 0) {
@@ -99,18 +96,13 @@ int main(int argc, char * const *argv) {
 
     if (num_threads < 1) {
       err(1, "invalid thread count: %s", argv[2]);
+    } else{
+      needle = argv[3];
+      paths = &argv[4];
     }
+  } 
 
-    needle = argv[3];
-    paths = &argv[4];
-
-  } else {
-    needle = argv[1];
-    paths = &argv[2];
-  }
-
-  // Initialise the job queue and some worker threads.
-  //create job_queue
+  // Initialise the job queue
   struct job_queue jq;
   job_queue_init(&jq, 64);
   struct worker_arg args;
