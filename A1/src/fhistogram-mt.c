@@ -150,6 +150,7 @@ int main(int argc, char * const *argv) {
   }
 
   move_lines(9);
+  free(threads);
 
   return 0;
 }
