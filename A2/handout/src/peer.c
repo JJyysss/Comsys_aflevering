@@ -106,6 +106,7 @@ void* client_thread()
     Here you should probably send a first register message using the 
     send_message function.
     */
+    send_message(peer_address, COMMAND_REGISTER, NULL, 0);
 
     // You should never see this printed in your finished implementation
     printf("Client thread done\n");
@@ -214,6 +215,10 @@ int main(int argc, char **argv)
     After determining our salt but before saving our address we should probably
     work out what our signature should be. 
     */
+    char salted_password[PASSWORD_LEN+SALT_LEN];
+    memcpy(salted_password, password, PASSWORD_LEN);
+    memcpy(salted_password+PASSWORD_LEN, my_address->salt, SALT_LEN);
+    get_data_sha(salted_password, my_address->signature, PASSWORD_LEN+SALT_LEN, SHA256_HASH_SIZE);
 
     // Start our record of the network by recording our own address. Make sure
     // any time we update this array we also update the peer_count.
