@@ -15,23 +15,17 @@
 
 #include "./peer.h"
 
-/*
-cd first_peer
-python3 ./peer.py 127.0.0.1 12345
-make
-cd src
-./peer 127.0.0.1 23456
-*/
-
 // Global variables to be used by both the server and client side of the peer.
 Address_t *my_address;
 
 Address_t** network = NULL;
 uint32_t peer_count = 0;
+pthread_mutex_t network_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* a help function that can read and parsing the 80 bytes of Reply_Header_t */
 int read_reply_header(compsys_helper_state_t *state, ReplyHeader_t *reply_header){
     ssize_t read_bytes = compsys_helper_readnb(state, reply_header, sizeof(ReplyHeader_t));
+    // if the readed bytes is less than 80, return -1
     if (read_bytes != REPLY_HEADER_LEN) {
         return -1;
     }
@@ -42,13 +36,30 @@ int read_reply_header(compsys_helper_state_t *state, ReplyHeader_t *reply_header
     return 0;
 }
 
-/* a help function to read the body from reply*/
-int read_reply_body (compsys_helper_state_t *state, char *reply_body, uint32_t body_length){
-    // the body length starts at reply_header-> length
+/* a help function to read the body from reply and request*/
+int read_body (compsys_helper_state_t *state, char *reply_body, uint32_t body_length){
     ssize_t read_bytes = compsys_helper_readnb(state, reply_body, body_length);
     if (read_bytes != body_length) {
         return -1;
     }
+    return 0;
+}
+
+/* send reply back to the peer*/
+int send_reply(int peer_socket, uint32_t status, char* body, uint32_t body_length){
+    ReplyHeader_t reply_header;
+    reply_header.length = htonl(body_length);
+    reply_header.status = htonl(status);
+    reply_header.this_block = htonl(0);
+    reply_header.block_count = htonl(1);
+    hashdata_t hash_body;
+    get_data_sha(body, hash_body, body_length, SHA256_HASH_SIZE);
+    memcpy(reply_header.block_hash, hash_body, SHA256_HASH_SIZE);
+    memcpy(reply_header.total_hash, hash_body, SHA256_HASH_SIZE);
+    compsys_helper_writen(peer_socket, &reply_header, REPLY_HEADER_LEN);
+    if (body_length > 0) {
+        compsys_helper_writen(peer_socket, body, body_length);
+    }   
     return 0;
 }
 
@@ -77,7 +88,7 @@ void handle_reply (compsys_helper_state_t *state, int command){
         printf("Reply header: length: %u\n status: %u\n, this_block: %u\n, block_count: %u\n ", 
      reply_header.length, reply_header.status, reply_header.this_block, reply_header.block_count);
         char reply_body[MAX_MSG_LEN];
-        readed_body = read_reply_body(state, reply_body, reply_header.length);
+        readed_body = read_body(state, reply_body, reply_header.length);
         if (readed_body < 0) {
             fprintf(stderr, "Error reading reply body\n");
             return;
@@ -92,6 +103,7 @@ void handle_reply (compsys_helper_state_t *state, int command){
                 Address_t *new_peer = malloc (sizeof(Address_t));
                 memcpy(new_peer, reply_body + i, PEER_ADDR_LEN);
                 new_peer->port = ntohl(new_peer->port);
+                // check if the peer is already exist, if not add to the network
                 Address_t *existing_peer = check_peer_exist(new_peer->ip, new_peer->port);
                 printf("Peer is replyed: %s %d\n", new_peer->ip, new_peer->port);
                 if (existing_peer == NULL) {
@@ -154,9 +166,6 @@ void send_message(Address_t peer_address, int command,
     3: Handing the response to the register message
     Rather than closing immediately we should probably handle a response.
     */
-   // a reply from other peer need to be read
-   // read reply_header from other peer, 80 bytes
-   // inform: no reply
    if (command != COMMAND_INFORM) {
     handle_reply(&state, command);
 }
@@ -227,22 +236,75 @@ void* handle_server_request_thread(void *vargp)
     pthread_detach(pthread_self()); 
     free(vargp);
 
-    close(connfd);
-
     /*
     5: Reading Server Requests
     Here we should probable actually read in some input data.
     */
+   // read the request_header from the connfd
+   // read the state
+   compsys_helper_readinitb(&state, connfd);
+    RequestHeader_t request_header;
+    // read bytes
+    ssize_t read_bytes = compsys_helper_readnb(&state, &request_header, sizeof(RequestHeader_t));
+    if (read_bytes != REQUEST_HEADER_LEN) {
+        fprintf(stderr, "Error reading request header\n");
+        close(connfd);
+        return NULL;
+    }
+    request_header.port = ntohl(request_header.port);
+    request_header.command = ntohl(request_header.command);
+    request_header.length = ntohl(request_header.length);
+    printf("Request header: ip: %s\n port: %u\n command: %u\n length: %u\n", 
+    request_header.ip, request_header.port, request_header.command, request_header.length);
+    char request_body[MAX_MSG_LEN];
+    if (request_header.length > 0) {
+        read_bytes = read_body(&state, request_body, request_header.length);
+        if (read_bytes < 0) {
+            fprintf(stderr, "Error reading request body\n");
+            close(connfd);
+            return NULL;
+    }
+    }
+    if (request_header.command == COMMAND_REGISTER){
+        pthread_mutex_lock(&network_mutex);
+        uint32_t status = STATUS_OK;
+        Address_t *existing_peer = check_peer_exist(request_header.ip, request_header.port);
+        if (existing_peer != NULL){
+            status = STATUS_PEER_EXISTS;
+        } else{
+            Address_t *new_peer = malloc(sizeof(Address_t));
+            char buf[MAX_MSG_LEN];
+            memcpy(new_peer->ip, request_header.ip, IP_LEN);
+            memcpy(buf, request_header.signature, SHA256_HASH_SIZE);
+            new_peer->port = request_header.port;
+            generate_random_salt(new_peer->salt);
+            memcpy(buf + SHA256_HASH_SIZE, new_peer->salt, SALT_LEN);
+            get_data_sha(buf, new_peer->signature, SHA256_HASH_SIZE + SALT_LEN, SHA256_HASH_SIZE);
+            network = realloc(network, sizeof(Address_t*) * (peer_count + 1));
+            network[peer_count] = new_peer;
+            peer_count++;
 
+        }
+        char peer_list[MAX_MSG_LEN];
+        for (uint32_t i = 0; i < peer_count; i++){
+            Address_t network_1 = *network[i];
+            network_1.port = htonl(network_1.port);
+            memcpy(peer_list + i * PEER_ADDR_LEN, &network_1, PEER_ADDR_LEN);
+        }
+        uint32_t peer_list_length = peer_count * PEER_ADDR_LEN;
+        pthread_mutex_unlock(&network_mutex);
+        send_reply(connfd, status, peer_list, peer_list_length);
+    }
+    close(connfd);
     return NULL;
 }
+
 
 /*
  * Function to act as basis for running the server thread. This thread will be
  * run concurrently with the client thread, but is infinite in nature.
  */
-void* server_thread()
-{
+void* server_thread(){
     int listenfd;
     
     // Start listening
@@ -260,8 +322,22 @@ void* server_thread()
     connections. The function 'handle_server_request_thread' has been provided
     as a simple skeleton function you could use to process your requests in.
     */
+   while(1){
+    int *connfd = malloc (sizeof(int));
+    *connfd = accept(listenfd, NULL, NULL);
+    if (*connfd < 0) {
+        fprintf(stderr, "Error accepting connection\n");
+        free(connfd);
+        continue;
+    }
+    pthread_t td;
+    pthread_create(&td, NULL, handle_server_request_thread, connfd);
+
+   }
+
 
     // You should never see this printed in your finished implementation
+    // while 1, so it will never reach here
     printf("Server thread done\n");
 
     return NULL;
@@ -317,7 +393,9 @@ int main(int argc, char **argv)
     */
    // buf with 32 bytes of password and salt length
    char buf[PASSWORD_LEN + SALT_LEN ];
+   // copy password into buf
    memcpy(buf, password, PASSWORD_LEN);
+   // copy salt into buf after password
    memcpy(buf + PASSWORD_LEN, user_salt, SALT_LEN);
    get_data_sha(buf, my_address->signature,PASSWORD_LEN + SALT_LEN , SHA256_HASH_SIZE); 
 
