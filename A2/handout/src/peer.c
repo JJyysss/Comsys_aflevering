@@ -38,7 +38,7 @@ Address_t* check_peer_exist(char *ip, uint32_t port){
 }
 int add_peer(Address_t *new_peer) {
     pthread_mutex_lock(&network_mutex);
-    if (check_peer_exist(new_peer->ip, new_peer->port) == NULL) {
+    if (check_peer_exist(new_peer->ip, new_peer->port) != NULL) {
         free(new_peer);
         pthread_mutex_unlock(&network_mutex);
         return 0;
