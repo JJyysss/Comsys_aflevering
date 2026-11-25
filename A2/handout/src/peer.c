@@ -15,6 +15,13 @@
 
 #include "./peer.h"
 
+/*
+cd first_peer
+python3 ./peer.py 127.0.0.1 12345
+make
+cd src
+./peer 127.0.0.1 23456
+*/
 
 // Global variables to be used by both the server and client side of the peer.
 Address_t *my_address;
@@ -22,6 +29,91 @@ Address_t *my_address;
 Address_t** network = NULL;
 uint32_t peer_count = 0;
 
+/* a help function that can read and parsing the 80 bytes of Reply_Header_t */
+int read_reply_header(compsys_helper_state_t *state, ReplyHeader_t *reply_header){
+    ssize_t read_bytes = compsys_helper_readnb(state, reply_header, sizeof(ReplyHeader_t));
+    if (read_bytes != REPLY_HEADER_LEN) {
+        return -1;
+    }
+    reply_header->length = ntohl(reply_header->length);
+    reply_header->status = ntohl(reply_header->status);
+    reply_header->this_block  = ntohl (reply_header->this_block);
+    reply_header->block_count = ntohl (reply_header->block_count);
+    return 0;
+}
+
+/* a help function to read the body from reply*/
+int read_reply_body (compsys_helper_state_t *state, char *reply_body, uint32_t body_length){
+    // the body length starts at reply_header-> length
+    ssize_t read_bytes = compsys_helper_readnb(state, reply_body, body_length);
+    if (read_bytes != body_length) {
+        return -1;
+    }
+    return 0;
+}
+
+/* a help function to check/find a peer if it is already in the network
+*/
+Address_t* check_peer_exist(char *ip, uint32_t port){
+    for (uint32_t i = 0; i < peer_count; i++){
+        if (strncmp(network[i]->ip, ip, IP_LEN) == 0 && network[i]->port == port){
+            return network[i];
+        }
+    }
+    return NULL;
+}
+
+/* a help function to handle the reply body*/
+void handle_reply (compsys_helper_state_t *state, int command){
+    int readed = 0;
+   int readed_body = 0;
+   ReplyHeader_t reply_header = {0};
+   if (command != COMMAND_INFORM){
+        readed = read_reply_header(state, &reply_header);
+        if (readed < 0) {
+            fprintf(stderr, "Error reading reply header\n");
+            return;
+        }
+        printf("Reply header: length: %u\n status: %u\n, this_block: %u\n, block_count: %u\n ", 
+     reply_header.length, reply_header.status, reply_header.this_block, reply_header.block_count);
+        char reply_body[MAX_MSG_LEN];
+        readed_body = read_reply_body(state, reply_body, reply_header.length);
+        if (readed_body < 0) {
+            fprintf(stderr, "Error reading reply body\n");
+            return;
+        }
+        if (reply_header.status != STATUS_OK && reply_header.status != STATUS_PEER_EXISTS) {
+            fprintf(stderr, "Error, the reply_header status: %u\n", reply_header.status);
+            return;
+
+        }
+        if (command == COMMAND_REGISTER){
+            for (int i = 0; i < reply_header.length; i+= PEER_ADDR_LEN){
+                Address_t *new_peer = malloc (sizeof(Address_t));
+                memcpy(new_peer, reply_body + i, PEER_ADDR_LEN);
+                new_peer->port = ntohl(new_peer->port);
+                Address_t *existing_peer = check_peer_exist(new_peer->ip, new_peer->port);
+                printf("Peer is replyed: %s %d\n", new_peer->ip, new_peer->port);
+                if (existing_peer == NULL) {
+                    network = realloc(network, sizeof(Address_t*) * (peer_count + 1));
+                    network[peer_count] = new_peer;
+                    peer_count++;
+                    printf("Added new peer to network: %s %d\n", new_peer->ip, new_peer->port);
+
+                }else{
+                    free(new_peer);
+                }
+            }
+            
+
+        }
+        else if (command == COMMAND_RETREIVE){
+            // retreive send the file content, parse the reply_body to get the file content
+
+
+        }
+   }
+}
 /*
  * Send a request message to another peer on the network. Unless this is 
  * specifically an 'inform' message as described in the assignment handout, a 
@@ -62,7 +154,12 @@ void send_message(Address_t peer_address, int command,
     3: Handing the response to the register message
     Rather than closing immediately we should probably handle a response.
     */
-
+   // a reply from other peer need to be read
+   // read reply_header from other peer, 80 bytes
+   // inform: no reply
+   if (command != COMMAND_INFORM) {
+    handle_reply(&state, command);
+}
     close(peer_socket);
 }
 
@@ -106,7 +203,10 @@ void* client_thread()
     Here you should probably send a first register message using the 
     send_message function.
     */
-    send_message(peer_address, COMMAND_REGISTER, NULL, 0);
+   send_message(peer_address, COMMAND_REGISTER, NULL, 0);
+   
+
+
 
     // You should never see this printed in your finished implementation
     printf("Client thread done\n");
@@ -215,10 +315,13 @@ int main(int argc, char **argv)
     After determining our salt but before saving our address we should probably
     work out what our signature should be. 
     */
-    char salted_password[PASSWORD_LEN+SALT_LEN];
-    memcpy(salted_password, password, PASSWORD_LEN);
-    memcpy(salted_password+PASSWORD_LEN, my_address->salt, SALT_LEN);
-    get_data_sha(salted_password, my_address->signature, PASSWORD_LEN+SALT_LEN, SHA256_HASH_SIZE);
+   // buf with 32 bytes of password and salt length
+   char buf[PASSWORD_LEN + SALT_LEN ];
+   memcpy(buf, password, PASSWORD_LEN);
+   memcpy(buf + PASSWORD_LEN, user_salt, SALT_LEN);
+   get_data_sha(buf, my_address->signature,PASSWORD_LEN + SALT_LEN , SHA256_HASH_SIZE); 
+
+   
 
     // Start our record of the network by recording our own address. Make sure
     // any time we update this array we also update the peer_count.

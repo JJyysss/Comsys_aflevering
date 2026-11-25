@@ -90,9 +90,9 @@ def assemble_signature(password: bytes, salt: bytes):
     The password and salt are combined and then hashed according to sha256. 
     Returns signature as bytes
     """
-    salted = f"{password}{salt}"
+    salted = password + salt
     signature = hashlib.sha256()
-    signature.update(str.encode(salted))
+    signature.update(salted)
 
     return signature.digest()
 
@@ -1015,7 +1015,7 @@ if __name__ == "__main__":
     # but for initial development you might find it easier to debug with a 
     # hard-coded value, in which case uncomment the following line and comment
     # out the line after that
-    #salt = "0123456789ABCDEF"
+    #user_salt = bytes("0123456789ABCDEF\0".encode())
     user_salt = bytes(get_random_salt(), 'utf-8')
 
     user_signature = assemble_signature(password, user_salt)
