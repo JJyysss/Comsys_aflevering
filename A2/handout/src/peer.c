@@ -15,6 +15,7 @@
 
 #include "./peer.h"
 
+
 // Global variables to be used by both the server and client side of the peer.
 Address_t *my_address;
 
@@ -22,17 +23,51 @@ Address_t** network = NULL;
 uint32_t peer_count = 0;
 pthread_mutex_t network_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* a help function to check/find a peer if it is already in the network
+*/
+Address_t* check_peer_exist(char *ip, uint32_t port){
+    //  0 is my_address, start with check it
+    for (uint32_t i = 0; i < peer_count; i++){
+        // check if the peer is already exist, if not add to the network
+        // using strncmp to compare char [] array e.g. "127.0.0.1" (bytes that stored at the memory address) e.g.0x1000
+        if (strncmp(network[i]->ip, ip, IP_LEN) == 0 && network[i]->port == port){
+            return network[i];
+        }
+    }
+    return NULL;
+}
+int add_peer(Address_t *new_peer) {
+    pthread_mutex_lock(&network_mutex);
+    if (check_peer_exist(new_peer->ip, new_peer->port) == NULL) {
+        free(new_peer);
+        pthread_mutex_unlock(&network_mutex);
+        return 0;
+    }
+    network = realloc(network, sizeof(Address_t*) * (peer_count + 1));
+    network[peer_count] = new_peer;
+    peer_count++;
+    printf("Added new peer to network: %s %d\n", new_peer->ip, new_peer->port);
+
+    pthread_mutex_unlock(&network_mutex);
+    return 0;
+}
+
 /* a help function that can read and parsing the 80 bytes of Reply_Header_t */
+// keep the format of the reply_header where those 80 bytes are stored by using comspsys_helper_state_t
 int read_reply_header(compsys_helper_state_t *state, ReplyHeader_t *reply_header){
+    // read 80 bytes 
+
     ssize_t read_bytes = compsys_helper_readnb(state, reply_header, sizeof(ReplyHeader_t));
     // if the readed bytes is less than 80, return -1
     if (read_bytes != REPLY_HEADER_LEN) {
         return -1;
     }
+    // convert uint32_t from network byte order to host byte order
     reply_header->length = ntohl(reply_header->length);
     reply_header->status = ntohl(reply_header->status);
     reply_header->this_block  = ntohl (reply_header->this_block);
     reply_header->block_count = ntohl (reply_header->block_count);
+
     return 0;
 }
 
@@ -47,12 +82,15 @@ int read_body (compsys_helper_state_t *state, char *reply_body, uint32_t body_le
 
 /* send reply back to the peer*/
 int send_reply(int peer_socket, uint32_t status, char* body, uint32_t body_length){
+    // send reply header first, 80 bytes
     ReplyHeader_t reply_header;
     reply_header.length = htonl(body_length);
     reply_header.status = htonl(status);
     reply_header.this_block = htonl(0);
     reply_header.block_count = htonl(1);
+    // send reply body, body_length bytes
     hashdata_t hash_body;
+    // hash the data before wriiten to the socket
     get_data_sha(body, hash_body, body_length, SHA256_HASH_SIZE);
     memcpy(reply_header.block_hash, hash_body, SHA256_HASH_SIZE);
     memcpy(reply_header.total_hash, hash_body, SHA256_HASH_SIZE);
@@ -63,16 +101,6 @@ int send_reply(int peer_socket, uint32_t status, char* body, uint32_t body_lengt
     return 0;
 }
 
-/* a help function to check/find a peer if it is already in the network
-*/
-Address_t* check_peer_exist(char *ip, uint32_t port){
-    for (uint32_t i = 0; i < peer_count; i++){
-        if (strncmp(network[i]->ip, ip, IP_LEN) == 0 && network[i]->port == port){
-            return network[i];
-        }
-    }
-    return NULL;
-}
 
 /* a help function to handle the reply body*/
 void handle_reply (compsys_helper_state_t *state, int command){
@@ -99,24 +127,13 @@ void handle_reply (compsys_helper_state_t *state, int command){
 
         }
         if (command == COMMAND_REGISTER){
-            for (int i = 0; i < reply_header.length; i+= PEER_ADDR_LEN){
+            for (uint32_t i = 0; i < reply_header.length; i+= PEER_ADDR_LEN){
                 Address_t *new_peer = malloc (sizeof(Address_t));
                 memcpy(new_peer, reply_body + i, PEER_ADDR_LEN);
                 new_peer->port = ntohl(new_peer->port);
-                // check if the peer is already exist, if not add to the network
-                Address_t *existing_peer = check_peer_exist(new_peer->ip, new_peer->port);
                 printf("Peer is replyed: %s %d\n", new_peer->ip, new_peer->port);
-                if (existing_peer == NULL) {
-                    network = realloc(network, sizeof(Address_t*) * (peer_count + 1));
-                    network[peer_count] = new_peer;
-                    peer_count++;
-                    printf("Added new peer to network: %s %d\n", new_peer->ip, new_peer->port);
-
-                }else{
-                    free(new_peer);
-                }
+                add_peer(new_peer);
             }
-            
 
         }
         else if (command == COMMAND_RETREIVE){
@@ -166,6 +183,7 @@ void send_message(Address_t peer_address, int command,
     3: Handing the response to the register message
     Rather than closing immediately we should probably handle a response.
     */
+
    if (command != COMMAND_INFORM) {
     handle_reply(&state, command);
 }
@@ -294,6 +312,20 @@ void* handle_server_request_thread(void *vargp)
         uint32_t peer_list_length = peer_count * PEER_ADDR_LEN;
         pthread_mutex_unlock(&network_mutex);
         send_reply(connfd, status, peer_list, peer_list_length);
+        if (status == STATUS_OK){
+            Address_t new_join_peer = *network[peer_count - 1];
+           new_join_peer.port = htonl(request_header.port);
+           for (uint32_t i = 1; i < peer_count -1; i++){
+            send_message(*network[i], COMMAND_INFORM, (char*)&new_join_peer, PEER_ADDR_LEN);
+           }
+        }
+    } else if (request_header.command == COMMAND_INFORM){
+        Address_t *new_peer = malloc(sizeof(Address_t));
+        memcpy(new_peer, request_body, PEER_ADDR_LEN);
+        new_peer->port = ntohl(new_peer->port);
+        printf("New peer informed: %s:%d\n", new_peer->ip, new_peer->port);
+        add_peer(new_peer);
+
     }
     close(connfd);
     return NULL;
